@@ -217,6 +217,7 @@ body[data-view="map"] .list-panel { display: none; }
 .status .btn { margin-top: 8px; margin-right: 6px; }
 .status .summary { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .status .summary b { color: var(--ink); }
+.link-btn { padding: 0; border: 0; background: none; color: var(--brand); font-weight: 600; text-decoration: underline; cursor: pointer; }
 
 .skeleton {
   height: 128px; margin-bottom: 10px; border-radius: var(--radius);
