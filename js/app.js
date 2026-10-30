@@ -16,6 +16,13 @@
   const MINE_KEY = 'materix:mystores';
   const LAST_KEY = 'materix:last';
   const MY_LOCATION = 'ตำแหน่งของฉัน';
+  const CACHE_KEY = 'materix:areas:v1';
+  const ENDPOINT_KEY = 'materix:endpoint';
+  const CACHE_TTL = 12 * 60 * 60 * 1000;
+  const MAX_CACHE_ENTRIES = 12;
+  const MAX_SAVED_ENTRIES = 4;
+  const MAX_SAVED_CHARS = 1500000;
+  const HEDGE_MS = 6000;
 
   // ร้านที่ชื่อบังเอิญมีคำค้น แต่ไม่ใช่ร้านวัสดุแน่นอน
   const EXCLUDED_SHOPS = ['jewelry', 'clothes', 'fashion', 'shoes', 'bag', 'beauty', 'cosmetics', 'hairdresser', 'massage',
@@ -24,6 +31,8 @@
     'car', 'motorcycle', 'tyres', 'laundry', 'dry_cleaning', 'pet', 'florist', 'gift', 'toys', 'lottery',
     'tattoo', 'travel_agency', 'funeral_directors', 'tailor', 'chemist', 'medical_supply', 'rice', 'pastry', 'confectionery',
     'computer', 'electronics', 'video_games', 'hifi', 'camera', 'art', 'fabric'];
+
+  let preferredEndpoint = loadJSON(ENDPOINT_KEY, null);
 
   /* ---------------- ตัวช่วยทั่วไป ---------------- */
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -252,48 +261,148 @@
   }
 
   /* ---------------- Overpass ---------------- */
+  function bboxOf(center, radiusKm) {
+    const dLat = radiusKm / 110.574;
+    const dLng = radiusKm / (111.32 * Math.cos((center.lat * Math.PI) / 180));
+    return [center.lat - dLat, center.lng - dLng, center.lat + dLat, center.lng + dLng].map((v) => v.toFixed(5));
+  }
+
+  // ใช้กรอบสี่เหลี่ยม (bbox) แทน around เพราะเซิร์ฟเวอร์ไม่ต้องคำนวณระยะทุกจุด แล้วค่อยตัดเป็นวงกลมในเบราว์เซอร์
+  // ไม่ดึง relation เพราะร้านแทบไม่มี และต้องโหลดสมาชิกทั้งหมดมาหาจุดกึ่งกลาง
   function buildQuery(center, radiusKm) {
-    const a = '(around:' + Math.round(radiusKm * 1000) + ',' + center.lat.toFixed(6) + ',' + center.lng.toFixed(6) + ')';
     const shops = unique(CATS.flatMap((c) => c.shop || []));
     const crafts = unique(CATS.flatMap((c) => c.craft || []));
     const industrial = unique(CATS.flatMap((c) => c.industrial || []));
-    return '[out:json][timeout:25];(' +
-      'nwr["shop"~"^(' + shops.join('|') + ')$"]' + a + ';' +
-      'nwr["shop"]["shop"!~"^(' + EXCLUDED_SHOPS.join('|') + ')$"]["name"~"' + NAME_PATTERN + '",i]' + a + ';' +
-      'nwr["craft"~"^(' + crafts.join('|') + ')$"]' + a + ';' +
-      'nwr["industrial"~"^(' + industrial.join('|') + ')$"]' + a + ';' +
-      'nwr["man_made"="works"]["product"~"concrete|cement|brick|steel|timber",i]' + a + ';' +
-      ');out center tags;';
+    return '[out:json][timeout:25][bbox:' + bboxOf(center, radiusKm).join(',') + '];(' +
+      'nw["shop"~"^(' + shops.join('|') + ')$"];' +
+      'nw["shop"]["shop"!~"^(' + EXCLUDED_SHOPS.join('|') + ')$"]["name"~"' + NAME_PATTERN + '",i];' +
+      'nw["craft"~"^(' + crafts.join('|') + ')$"];' +
+      'nw["industrial"~"^(' + industrial.join('|') + ')$"];' +
+      'nw["man_made"="works"]["product"~"concrete|cement|brick|steel|timber",i];' +
+      ');out center tags qt;';
   }
 
-  async function overpass(query, outerSignal) {
-    let lastErr = new Error('no endpoint');
-    for (const url of CFG.overpassEndpoints) {
-      const ctrl = new AbortController();
-      const onAbort = () => ctrl.abort();
-      outerSignal.addEventListener('abort', onAbort);
-      const timer = setTimeout(() => ctrl.abort(), 30000);
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body: 'data=' + encodeURIComponent(query),
-          signal: ctrl.signal
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const json = await res.json();
-        if (!Array.isArray(json.elements)) throw new Error('bad response');
-        if (!json.elements.length && json.remark && /error/i.test(json.remark)) throw new Error(json.remark);
-        return json;
-      } catch (e) {
-        if (outerSignal.aborted) throw e;
-        lastErr = e;
-      } finally {
-        clearTimeout(timer);
+  async function fetchOverpass(url, query, signal) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: 'data=' + encodeURIComponent(query),
+      signal
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (!Array.isArray(json.elements)) throw new Error('bad response');
+    if (json.remark && /runtime error/i.test(json.remark)) throw new Error(json.remark);
+    return json;
+  }
+
+  /*
+   * เริ่มจากเซิร์ฟเวอร์ที่ตอบเร็วล่าสุด ถ้าล้มเหลวจะสลับทันที
+   * ถ้าเงียบนานเกิน HEDGE_MS จะยิงเซิร์ฟเวอร์ถัดไปพร้อมกัน แล้วใช้ผลที่มาก่อน
+   */
+  function overpass(query, outerSignal, onSlow) {
+    const endpoints = unique([preferredEndpoint].concat(CFG.overpassEndpoints).filter((u) => CFG.overpassEndpoints.includes(u)));
+    return new Promise((resolve, reject) => {
+      const ctrls = [];
+      let next = 0;
+      let running = 0;
+      let done = false;
+      let lastErr = new Error('no endpoint');
+      let hedgeTimer = null;
+
+      const finish = (ok, value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(hedgeTimer);
+        ctrls.forEach((c) => c.abort());
         outerSignal.removeEventListener('abort', onAbort);
-      }
+        (ok ? resolve : reject)(value);
+      };
+      const onAbort = () => finish(false, new DOMException('Aborted', 'AbortError'));
+      outerSignal.addEventListener('abort', onAbort);
+
+      const launch = () => {
+        if (done || next >= endpoints.length) return false;
+        const url = endpoints[next++];
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 30000);
+        ctrls.push(ctrl);
+        running++;
+        fetchOverpass(url, query, ctrl.signal).then((json) => {
+          if (url !== preferredEndpoint) {
+            preferredEndpoint = url;
+            saveJSON(ENDPOINT_KEY, url);
+          }
+          finish(true, json);
+        }, (e) => {
+          running--;
+          lastErr = e;
+          if (!launch() && running === 0) finish(false, lastErr);
+        }).finally(() => clearTimeout(timer));
+        clearTimeout(hedgeTimer);
+        hedgeTimer = setTimeout(() => {
+          if (!done && next < endpoints.length) {
+            if (onSlow) onSlow();
+            launch();
+          }
+        }, HEDGE_MS);
+        return true;
+      };
+      launch();
+    });
+  }
+
+  /* ---------------- แคชข้อมูลร้านตามพื้นที่ ---------------- */
+  // เก็บผลแต่ละครั้งเป็น "วงกลม" ถ้าพื้นที่ใหม่อยู่ในวงที่โหลดไว้แล้ว (เช่น ลดระยะ หรือขยับหมุดนิดเดียว) ไม่ต้องโหลดใหม่
+  let areaCache = loadJSON(CACHE_KEY, []).filter((e) => e && Array.isArray(e.stores) && Date.now() - e.t < CACHE_TTL);
+
+  function isFresh(e) {
+    return Date.now() - e.t < CACHE_TTL;
+  }
+
+  function coveringEntry(center, radiusKm) {
+    return areaCache
+      .filter((e) => isFresh(e) && distanceKm(e, center) + radiusKm <= e.r + 0.01)
+      .sort((a, b) => a.r - b.r)[0];
+  }
+
+  // ร้านจากพื้นที่ที่ทับซ้อนกัน ใช้แสดงไปก่อนระหว่างรอข้อมูลใหม่
+  function overlappingStores(center, radiusKm) {
+    return dedupe(areaCache
+      .filter((e) => isFresh(e) && distanceKm(e, center) < e.r + radiusKm)
+      .flatMap((e) => e.stores));
+  }
+
+  function addToCache(center, radiusKm, stores) {
+    const entry = { lat: center.lat, lng: center.lng, r: radiusKm, t: Date.now(), stores };
+    areaCache = areaCache.filter((e) => isFresh(e) && distanceKm(e, center) + e.r > radiusKm + 0.01);
+    areaCache.push(entry);
+    if (areaCache.length > MAX_CACHE_ENTRIES) areaCache = areaCache.slice(-MAX_CACHE_ENTRIES);
+    persistCache();
+    return entry;
+  }
+
+  function persistCache() {
+    const newest = areaCache.slice().sort((a, b) => b.t - a.t).slice(0, MAX_SAVED_ENTRIES);
+    for (let n = newest.length; n >= 0; n--) {
+      const json = JSON.stringify(newest.slice(0, n));
+      if (n > 0 && json.length > MAX_SAVED_CHARS) continue;
+      try {
+        localStorage.setItem(CACHE_KEY, json);
+        return;
+      } catch (e) { /* พื้นที่เต็ม — ลองเก็บให้น้อยลง */ }
     }
-    throw lastErr;
+  }
+
+  function dropCacheFor(center, radiusKm) {
+    areaCache = areaCache.filter((e) => !(distanceKm(e, center) + radiusKm <= e.r + 0.01));
+    persistCache();
+  }
+
+  function fmtAge(ms) {
+    const min = Math.round(ms / 60000);
+    if (min < 60) return min + ' นาที';
+    return Math.round(min / 60) + ' ชม.';
   }
 
   /* ---------------- Nominatim ---------------- */
@@ -340,7 +449,9 @@
     sort: 'distance',
     chain: null,
     osm: [],
+    dataTime: null,
     loading: false,
+    slow: false,
     error: null,
     shown: PAGE_SIZE,
     activeId: null,
@@ -353,7 +464,6 @@
   };
 
   const partnerStores = PARTNERS.map((s) => normalizeCustom(s, 'partner')).filter(Boolean);
-  const cache = new Map();
   let storeIndex = new Map();
   let reqSeq = 0;
   let currentAbort = null;
@@ -414,7 +524,7 @@
 
   function storesInRadius() {
     const all = dedupe(state.osm.concat(partnerStores, mineStores()));
-    return all.map(withDist).filter((s) => s.dist <= state.radiusKm * 1.02);
+    return all.map(withDist).filter((s) => s.dist <= state.radiusKm);
   }
 
   function matchesText(s, q) {
@@ -566,19 +676,24 @@
     s.className = 'status';
     if (state.loading) {
       s.classList.add('info');
-      s.innerHTML = '⏳ กำลังค้นหาร้านในระยะ ' + state.radiusKm + ' กม.…';
+      s.innerHTML = '<div>⏳ กำลังค้นหาร้านในระยะ ' + state.radiusKm + ' กม.…' +
+        (filtered.length ? ' แสดงร้านที่โหลดไว้แล้ว ' + filtered.length + ' ร้านไปก่อน' : '') + '</div>' +
+        (state.slow ? '<div class="hint" style="margin:4px 0 0">เซิร์ฟเวอร์แผนที่ตอบช้า กำลังลองเซิร์ฟเวอร์สำรองพร้อมกัน</div>' : '');
       return;
     }
     const parts = [];
     if (state.error) {
       s.classList.add('error');
       parts.push('<div>⚠️ โหลดข้อมูลร้านจากแผนที่ไม่สำเร็จ (เซิร์ฟเวอร์อาจไม่ว่างหรือไม่มีอินเทอร์เน็ต)' +
-        (filtered.length ? ' — แสดงเฉพาะร้านพันธมิตรและร้านที่คุณเพิ่ม' : '') + '</div>' +
+        (filtered.length ? ' — แสดงเฉพาะร้านที่มีข้อมูลอยู่ในเครื่องแล้ว' : '') + '</div>' +
         '<button type="button" class="btn btn-sm" data-act="retry">ลองอีกครั้ง</button>');
     } else {
       const withPhone = filtered.filter((x) => x.phones.length).length;
+      const age = state.dataTime ? Date.now() - state.dataTime : 0;
       parts.push('<div class="summary"><span>พบ <b>' + filtered.length + '</b> ร้าน ในระยะ ' + state.radiusKm + ' กม.</span>' +
-        '<span>มีเบอร์โทร <b>' + withPhone + '</b> ร้าน</span></div>');
+        '<span>มีเบอร์โทร <b>' + withPhone + '</b> ร้าน</span>' +
+        (age > 10 * 60 * 1000 ? '<span>ข้อมูลเมื่อ ' + fmtAge(age) + ' ที่แล้ว · <button type="button" class="link-btn" data-act="refresh">โหลดใหม่</button></span>' : '') +
+        '</div>');
     }
     if (state.chain) {
       parts.push('<div>กำลังแสดงเฉพาะสาขา <b>' + esc(state.chain.name) + '</b> ' +
@@ -624,9 +739,9 @@
     const { base, filtered, counts } = computeLists();
     renderChips(counts, base.length);
     renderStatus(filtered);
-    els.countNearby.textContent = state.loading ? '…' : filtered.length;
+    els.countNearby.textContent = state.loading && !filtered.length ? '…' : filtered.length;
 
-    if (state.loading) {
+    if (state.loading && !filtered.length) {
       els.results.innerHTML = '<li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>';
       els.more.hidden = true;
     } else {
@@ -635,7 +750,7 @@
       els.more.hidden = filtered.length <= state.shown;
       els.more.textContent = 'แสดงเพิ่มเติม (เหลืออีก ' + Math.max(0, filtered.length - state.shown) + ' ร้าน)';
     }
-    renderMarkers(state.loading ? [] : filtered);
+    renderMarkers(filtered);
     renderFavs();
     updateUrl();
   }
@@ -654,36 +769,50 @@
   }
 
   /* ---------------- โหลดร้าน ---------------- */
-  async function loadNearby() {
-    const key = state.center.lat.toFixed(4) + ',' + state.center.lng.toFixed(4) + ',' + state.radiusKm;
+  async function loadNearby(opts = {}) {
     if (currentAbort) currentAbort.abort();
+    currentAbort = null;
     const seq = ++reqSeq;
-    if (cache.has(key)) {
-      state.osm = cache.get(key);
+    const center = { lat: state.center.lat, lng: state.center.lng };
+    const radiusKm = state.radiusKm;
+    if (opts.force) dropCacheFor(center, radiusKm);
+
+    const hit = coveringEntry(center, radiusKm);
+    if (hit) {
+      state.osm = hit.stores;
+      state.dataTime = hit.t;
       state.loading = false;
+      state.slow = false;
       state.error = null;
       render();
       return;
     }
+
     const ctrl = new AbortController();
     currentAbort = ctrl;
+    state.osm = overlappingStores(center, radiusKm);
+    state.dataTime = null;
     state.loading = true;
+    state.slow = false;
     state.error = null;
     render();
     try {
-      const json = await overpass(buildQuery(state.center, state.radiusKm), ctrl.signal);
+      const json = await overpass(buildQuery(center, radiusKm), ctrl.signal, () => {
+        if (seq !== reqSeq) return;
+        state.slow = true;
+        render();
+      });
       if (seq !== reqSeq) return;
-      const stores = dedupe(json.elements.map(normalizeOsm).filter(Boolean));
-      cache.set(key, stores);
-      if (cache.size > 20) cache.delete(cache.keys().next().value);
-      state.osm = stores;
+      const entry = addToCache(center, radiusKm, dedupe(json.elements.map(normalizeOsm).filter(Boolean)));
+      state.osm = entry.stores;
+      state.dataTime = entry.t;
     } catch (e) {
       if (seq !== reqSeq) return;
       console.warn('Overpass error', e);
-      state.osm = [];
       state.error = e;
     }
     state.loading = false;
+    state.slow = false;
     render();
   }
 
@@ -913,7 +1042,7 @@
     const actEl = e.target.closest('[data-act]');
     if (!actEl) return;
     const act = actEl.dataset.act;
-    if (act === 'retry') { cache.clear(); loadNearby(); return; }
+    if (act === 'retry' || act === 'refresh') { loadNearby({ force: true }); return; }
     if (act === 'expand') { const nr = nextRadius(); if (nr) setRadius(nr); return; }
     if (act === 'clear-filters') { clearFilters(); return; }
     if (act === 'clear-chain') { state.chain = null; render(); return; }
