@@ -94,6 +94,8 @@ window.MATERIX_STORES = [
 ## ปรับแต่ง
 
 - **หมวดหมู่และคำค้นในชื่อร้าน**: แก้ `categories` ใน `js/config.js`
+- **หมวดของ Overture ที่นับเป็นร้านวัสดุ**: แก้ `CATEGORY_TAGS` / `NAME_RULES` ใน `scripts/overture.py`
+  (log ของ workflow “Update store data” มีรายงานจำนวนร้านในแต่ละหมวดที่พบ ว่าหมวดไหนถูกเก็บหรือข้าม)
 - **จังหวัดในรายการลัด**: แก้ `cities`
 - **ห้างวัสดุ / เบอร์ Call Center**: แก้ `chains` (ตอนนี้ใส่เบอร์เฉพาะไทวัสดุ 1308 และโฮมโปร 1284 ที่ยืนยันจากประกาศของบริษัทแล้ว)
 - **ระยะค้นหาเริ่มต้น / จุดเริ่มต้น**: แก้ `defaultRadiusKm` และ `defaultCenter`
