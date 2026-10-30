@@ -8,15 +8,30 @@ window.MATERIX_CONFIG = {
   defaultRadiusKm: 5,
   radiusOptions: [1, 3, 5, 10, 20, 30],
 
-  // ลองทีละเซิร์ฟเวอร์ ถ้าเซิร์ฟเวอร์แรกไม่ว่าง
+  // ข้อมูลร้านทั่วประเทศที่สร้างไว้ล่วงหน้า (scripts/build_data.py) — ค้นหาได้ทันทีโดยไม่ต้องรอเซิร์ฟเวอร์แผนที่
+  dataUrl: 'data/',
+
+  // ใช้เมื่อกด "ดึงข้อมูลล่าสุด" หรือเมื่อไม่มีข้อมูลที่สร้างไว้ล่วงหน้า
   overpassEndpoints: [
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter'
+    'https://overpass.private.coffee/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
   ],
   nominatimUrl: 'https://nominatim.openstreetmap.org',
   tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">ผู้ร่วมให้ข้อมูล OpenStreetMap</a>',
+
+  // ร้านที่ชื่อบังเอิญมีคำค้น แต่ไม่ใช่ร้านวัสดุแน่นอน
+  excludedShops: ['jewelry', 'clothes', 'fashion', 'shoes', 'bag', 'beauty', 'cosmetics', 'hairdresser', 'massage',
+    'convenience', 'supermarket', 'bakery', 'butcher', 'seafood', 'greengrocer', 'frozen_food', 'coffee', 'tea',
+    'beverages', 'alcohol', 'wine', 'tobacco', 'e-cigarette', 'books', 'stationery', 'optician', 'mobile_phone',
+    'car', 'motorcycle', 'tyres', 'laundry', 'dry_cleaning', 'pet', 'florist', 'gift', 'toys', 'lottery',
+    'tattoo', 'travel_agency', 'funeral_directors', 'tailor', 'chemist', 'medical_supply', 'rice', 'pastry', 'confectionery',
+    'computer', 'electronics', 'video_games', 'hifi', 'camera', 'art', 'fabric'],
+
+  // โรงงาน (man_made=works) ที่ผลิตสินค้าเหล่านี้นับเป็นแหล่งวัสดุ
+  worksProducts: ['concrete', 'cement', 'brick', 'steel', 'timber'],
 
   /*
    * หมวดหมู่สินค้า
