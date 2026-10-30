@@ -16,30 +16,55 @@ MIN_CONFIDENCE = 0.5
 # คัดกว้าง ๆ ก่อนใน SQL (ชื่อหมวดของ Overture เป็นภาษาอังกฤษแบบ snake_case)
 BROAD = ('hardware|building_suppl|building_material|home_improvement|lumber|timber|tile|flooring|paint|plumb|'
          'electrical|lighting|steel|metal|concrete|cement|brick|sand|gravel|glass|door|window|roof|equipment_rental|'
-         'tool|scaffold|machinery|construction|bathroom|kitchen_and_bath|fence|stone|marble|granite|pipe|aluminum')
+         'tool|scaffold|machinery|construction|bathroom|kitchen_and_bath|fence|stone|marble|granite|pipe|aluminum|'
+         'masonry|engineering|industrial_equipment|welding|woodworking')
 
-# หมวดหลักของ Overture → แท็กแบบ OSM (ให้ js/config.js จัดหมวดต่อ) ใช้กฎแรกที่ตรง
-# ชื่อหมวดคั่นคำด้วย _ จึงใช้ (^|_) … (_|$) กันคำย่อยตรงผิด เช่น door ใน outdoor
-CATEGORY_RULES = [
-    (r'(^|_)home_improvement', {'shop': 'doityourself'}),
-    (r'(^|_)hardware(_|$)', {'shop': 'hardware'}),
-    (r'building_suppl|building_material|construction_material', {'shop': 'building_materials'}),
-    (r'(^|_)(lumber|timber|sawmill)', {'shop': 'timber'}),
-    (r'(^|_)(tile|tiles|flooring)(_|$)|kitchen_and_bath|bathroom_suppl|sanitary', {'shop': 'tiles'}),
-    (r'(^|_)paint_store|paint_suppl', {'shop': 'paint'}),
-    (r'plumbing_suppl|plumbing_store', {'shop': 'plumbing'}),
-    (r'electrical_suppl|electrical_store|lighting_store|lighting_fixture', {'shop': 'electrical'}),
-    (r'(^|_)(steel|metal_suppl|metal_fabricat|aluminum|aluminium)', {'craft': 'metal_construction'}),
-    (r'(^|_)(concrete|cement|ready_mix|brick)', {'industrial': 'concrete'}),
-    (r'glass_and_mirror|(^|_)(doors?|windows?)(_|$)', {'shop': 'glaziery'}),
-    (r'equipment_rental|tool_rental|scaffold|(^|_)machinery|heavy_equipment', {'shop': 'tool_hire'}),
+# หมวดหลักของ Overture → แท็กแบบ OSM (ให้ js/config.js จัดหมวดต่อจากแท็กและชื่อร้าน)
+# รายการนี้คัดจากรายงานหมวดที่พบจริงในประเทศไทย (ดู log ของ workflow "Update store data")
+CATEGORY_TAGS = {
+    'building_supply_store': {'shop': 'building_materials'},
+    'hardware_store': {'shop': 'hardware'},
+    'hardware_home_and_garden_store': {'shop': 'hardware'},
+    'home_improvement_store': {'shop': 'doityourself'},
+    'welding_supply_store': {'shop': 'hardware'},
+    'metal_supplier': {'craft': 'metal_construction'},
+    'metal_fabricator': {'craft': 'metal_construction'},
+    'steel_fabricator': {'craft': 'metal_construction'},
+    'fence_and_gate_sales_service': {'craft': 'metal_construction'},
+    'glass_and_mirror_sales_service': {'shop': 'glaziery'},
+    'windows_installation': {'shop': 'windows'},
+    'window_supplier': {'shop': 'windows'},
+    'garage_door_service': {'shop': 'doors'},
+    'roofing': {'shop': 'trade'},
+    'lighting_store': {'shop': 'lighting'},
+    'lighting_fixtures_and_equipment': {'shop': 'lighting'},
+    'electrical_supply_store': {'shop': 'electrical'},
+    'plumbing_supply_store': {'shop': 'plumbing'},
+    'lumber_store': {'shop': 'timber'},
+    'woodworking_supply_store': {'shop': 'timber'},
+    'cement_supplier': {'industrial': 'cement'},
+    'granite_supplier': {'shop': 'tiles'},
+    'tile_store': {'shop': 'tiles'},
+    'flooring_store': {'shop': 'flooring'},
+    'paint_store': {'shop': 'paint'},
+    'machine_and_tool_rental': {'shop': 'tool_hire'},
+    'construction_equipment_rental': {'shop': 'tool_hire'},
+    'heavy_equipment_rental': {'shop': 'tool_hire'},
+}
+
+# หมวดผู้รับเหมา/บริการ — รับเฉพาะเมื่อชื่อร้านบอกว่าขายวัสดุหรือให้เช่าเครื่องมือ (ใช้กฎแรกที่ตรง)
+NAME_GATED = {'masonry_concrete', 'stone_and_masonry', 'building_or_construction_service', 'engineering_service',
+              'industrial_equipment_manufacturer'}
+NAME_RULES = [
+    (re.compile(r'เช่า|นั่งร้าน|แบ็?คโฮ|รถขุด|เครน|rental|for rent|scaffold', re.I), {'shop': 'tool_hire'}),
+    (re.compile(r'คอนกรีต|ปูน|อิฐ|ทราย|หินคลุก|ดินถม|เสาเข็ม|concrete|cement|brick|ready ?mix', re.I), {'industrial': 'concrete'}),
+    (re.compile(r'วัสดุ|ฮาร์ดแวร์|hardware|building material', re.I), {'shop': 'building_materials'}),
+    (re.compile(r'เหล็ก|เมทัลชีท|steel|metal ?sheet', re.I), {'craft': 'metal_construction'}),
 ]
-# หมวดที่บังเอิญมีคำค้น แต่ไม่ใช่ร้านวัสดุ (เทียบเป็นคำ)
-EXCLUDE = re.compile(r'(^|_)(restaurant|cafe|food|hotel|eyewear|optician|optical|auto|automotive|car|vehicle|motorcycle|'
-                     r'bicycle|boat|electronics|computer|mobile|phone|appliance|appliances|jewelry|clothing|beauty|salon|'
-                     r'spa|massage|school|church|temple|government|hospital|clinic|bank|atm|event|party|music|art|museum|'
-                     r'bar|pub|toy|toys|game|games|camera|audio|medical|pharmacy|pet|tattoo|nail|washing|cleaning|'
-                     r'tinting|repair)(_|$)')
+
+# ชื่อที่ไม่ใช่ร้านวัสดุแน่นอน แม้ Overture จะจัดหมวดไว้ใกล้เคียง
+NAME_EXCLUDE = re.compile(r'บอนไซ|bonsai|ต้นไม้|พันธุ์ไม้|กล้วยไม้|ไม้ประดับ|nursery|ไอที|คอมพิวเตอร์|computer|โรงแรม|hotel|'
+                          r'รีสอร์ท|resort|ร้านอาหาร|restaurant|คาเฟ่|cafe|coffee|กาแฟ', re.I)
 
 
 def latest_release():
@@ -51,12 +76,15 @@ def latest_release():
     return releases[::-1]
 
 
-def map_category(primary, cat_text):
-    if not primary or EXCLUDE.search(primary):
+def map_category(primary, name):
+    if not primary or not name or NAME_EXCLUDE.search(name):
         return None
-    for pattern, tags in CATEGORY_RULES:
-        if re.search(pattern, primary):
-            return tags
+    if primary in CATEGORY_TAGS:
+        return CATEGORY_TAGS[primary]
+    if primary in NAME_GATED:
+        for pattern, tags in NAME_RULES:
+            if pattern.search(name):
+                return tags
     return None
 
 
@@ -147,7 +175,7 @@ def fetch(log=print):
                 continue
             if (r['status'] or 'open') != 'open' or (r['confidence'] is not None and r['confidence'] < MIN_CONFIDENCE):
                 continue
-            mapped = map_category(r['primary_cat'], r['cat_text'])
+            mapped = map_category(r['primary_cat'], r['name'])
             report[(r['primary_cat'], bool(mapped))] += 1
             if not mapped:
                 continue
