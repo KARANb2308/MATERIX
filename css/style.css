@@ -124,6 +124,7 @@ button, input, select { font: inherit; color: inherit; }
 .place-results button:hover, .place-results button:focus-visible { background: var(--brand-soft); }
 .place-results small { display: block; color: var(--muted); font-size: 12.5px; }
 .place-results .empty { padding: 8px 10px; color: var(--muted); }
+.place-results .group { padding: 8px 10px 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
 
 .select, .input {
   height: 42px; padding: 0 10px;

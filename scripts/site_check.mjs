@@ -37,8 +37,10 @@ async function newPage(browser) {
   const net = [];
   const errors = [];
   page.on('requestfinished', async (req) => {
-    const res = await req.response();
-    net.push({ url: req.url(), status: res ? res.status() : 0, ms: req.timing().responseEnd });
+    try {
+      const res = await req.response();
+      net.push({ url: req.url(), status: res ? res.status() : 0, ms: req.timing().responseEnd });
+    } catch (e) { /* page closed */ }
   });
   page.on('requestfailed', (req) => net.push({ url: req.url(), status: 'FAILED ' + (req.failure() || {}).errorText, ms: -1 }));
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -124,6 +126,24 @@ async function checkSite(browser, site) {
   }
   log(`${site.name}   place net: ${summarizeNet(pn)}`);
   await pc.close();
+
+  // ปุ่ม "ใช้ตำแหน่งของฉัน" (จำลองพิกัดที่ขอนแก่น)
+  {
+    const gctx = await browser.newContext({ locale: 'th-TH', geolocation: { latitude: 16.4322, longitude: 102.8236, accuracy: 30 }, permissions: ['geolocation'] });
+    const gp = await gctx.newPage();
+    await gp.goto(site.url + '?lat=13.7563&lng=100.5018&r=10', { waitUntil: 'domcontentloaded' });
+    await gp.waitForFunction(() => /พบ \d+ ร้าน/.test(document.querySelector('#status').textContent), null, { timeout: 60000 }).catch(() => {});
+    const t0 = Date.now();
+    await gp.click('#btnLocate');
+    try {
+      await gp.waitForFunction(() => document.querySelector('#locLabel').textContent.includes('ตำแหน่งของฉัน') &&
+        /พบ \d+ ร้าน/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });
+      log(`${site.name} my location: ${Date.now() - t0} ms | ${(await gp.textContent('#status')).replace(/\s+/g, ' ').slice(0, 80)}`);
+    } catch (e) {
+      log(`${site.name} my location: NO RESULT after ${Date.now() - t0} ms`);
+    }
+    await gctx.close();
+  }
 
   // ดึงข้อมูลล่าสุด (สด) จาก Overpass
   const { ctx: lc, page: lp, net: ln } = await newPage(browser);
