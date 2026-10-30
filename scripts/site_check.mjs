@@ -152,7 +152,7 @@ async function checkSite(browser, site) {
     await lp.waitForSelector('[data-act="refresh"]', { timeout: 60000 });
     const t0 = Date.now();
     await lp.click('[data-act="refresh"]');
-    await lp.waitForFunction(() => !/กำลังค้นหา/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+    await lp.waitForFunction(() => !/กำลังค้นหา|กำลังดึง/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     log(`${site.name} live refresh: ${Date.now() - t0} ms | ${(await lp.textContent('#status')).replace(/\s+/g, ' ').slice(0, 120)}`);
   } catch (e) {
     log(`${site.name} live refresh: ${e.message.split('\n')[0]}`);
