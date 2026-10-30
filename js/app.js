@@ -24,13 +24,6 @@
   const MAX_SAVED_CHARS = 1500000;
   const HEDGE_MS = 6000;
 
-  // ร้านที่ชื่อบังเอิญมีคำค้น แต่ไม่ใช่ร้านวัสดุแน่นอน
-  const EXCLUDED_SHOPS = ['jewelry', 'clothes', 'fashion', 'shoes', 'bag', 'beauty', 'cosmetics', 'hairdresser', 'massage',
-    'convenience', 'supermarket', 'bakery', 'butcher', 'seafood', 'greengrocer', 'frozen_food', 'coffee', 'tea',
-    'beverages', 'alcohol', 'wine', 'tobacco', 'e-cigarette', 'books', 'stationery', 'optician', 'mobile_phone',
-    'car', 'motorcycle', 'tyres', 'laundry', 'dry_cleaning', 'pet', 'florist', 'gift', 'toys', 'lottery',
-    'tattoo', 'travel_agency', 'funeral_directors', 'tailor', 'chemist', 'medical_supply', 'rice', 'pastry', 'confectionery',
-    'computer', 'electronics', 'video_games', 'hifi', 'camera', 'art', 'fabric'];
 
   let preferredEndpoint = loadJSON(ENDPOINT_KEY, null);
 
@@ -275,10 +268,10 @@
     const industrial = unique(CATS.flatMap((c) => c.industrial || []));
     return '[out:json][timeout:25][bbox:' + bboxOf(center, radiusKm).join(',') + '];(' +
       'nw["shop"~"^(' + shops.join('|') + ')$"];' +
-      'nw["shop"]["shop"!~"^(' + EXCLUDED_SHOPS.join('|') + ')$"]["name"~"' + NAME_PATTERN + '",i];' +
+      'nw["shop"]["shop"!~"^(' + CFG.excludedShops.join('|') + ')$"]["name"~"' + NAME_PATTERN + '",i];' +
       'nw["craft"~"^(' + crafts.join('|') + ')$"];' +
       'nw["industrial"~"^(' + industrial.join('|') + ')$"];' +
-      'nw["man_made"="works"]["product"~"concrete|cement|brick|steel|timber",i];' +
+      'nw["man_made"="works"]["product"~"' + CFG.worksProducts.join('|') + '",i];' +
       ');out center tags qt;';
   }
 

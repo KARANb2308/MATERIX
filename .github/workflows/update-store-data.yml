@@ -1,0 +1,52 @@
+# สร้างข้อมูลร้านวัสดุก่อสร้างทั่วประเทศจาก OpenStreetMap ใหม่ทุกสัปดาห์ แล้ว commit ไว้ในโฟลเดอร์ data/
+name: Update store data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 19 * * 0'   # ทุกวันจันทร์ 02:17 เวลาไทย
+  push:
+    branches: [claude/hopeful-brahmagupta-dcayya]
+    paths:
+      - scripts/build_data.py
+      - js/config.js
+      - .github/workflows/update-store-data.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-store-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pyosmium
+        run: pip install osmium==4.3.2
+
+      - name: Download Thailand extract
+        run: curl -fsSL --retry 5 --retry-delay 15 -o "$RUNNER_TEMP/thailand.osm.pbf" https://download.geofabrik.de/asia/thailand-latest.osm.pbf
+
+      - name: Build data
+        run: python scripts/build_data.py "$RUNNER_TEMP/thailand.osm.pbf" data
+
+      - name: Commit data
+        run: |
+          git add data
+          if git diff --cached --quiet; then
+            echo "Data unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update store data from OpenStreetMap"
+          git push
