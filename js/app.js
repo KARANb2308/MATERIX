@@ -23,6 +23,7 @@
   const MAX_SAVED_ENTRIES = 4;
   const MAX_SAVED_CHARS = 1500000;
   const HEDGE_MS = 6000;
+  const LIVE_MAX_MS = 30000; // ดึงสดจาก Overpass รอนานสุดเท่านี้ แล้วกลับไปใช้ข้อมูลที่มีอยู่
 
 
   let preferredEndpoint = loadJSON(ENDPOINT_KEY, null);
@@ -314,6 +315,7 @@
       };
       const onAbort = () => finish(false, new DOMException('Aborted', 'AbortError'));
       outerSignal.addEventListener('abort', onAbort);
+      setTimeout(() => finish(false, new Error('ไม่มีเซิร์ฟเวอร์ตอบภายใน ' + LIVE_MAX_MS / 1000 + ' วินาที')), LIVE_MAX_MS);
 
       const launch = () => {
         if (done || next >= endpoints.length) return false;
@@ -534,6 +536,7 @@
     dataTime: null,
     source: null,
     loading: false,
+    liveRefresh: false,
     slow: false,
     error: null,
     shown: PAGE_SIZE,
@@ -757,6 +760,12 @@
   function renderStatus(filtered) {
     const s = els.status;
     s.className = 'status';
+    if (state.loading && state.liveRefresh) {
+      s.classList.add('info');
+      s.innerHTML = '<div>⏳ กำลังดึงข้อมูลสดจากแผนที่ออนไลน์ (เซิร์ฟเวอร์สาธารณะ อาจใช้เวลาถึง ' + LIVE_MAX_MS / 1000 +
+        ' วินาที) — ระหว่างนี้ดูและโทรหาร้านด้านล่างได้เลย</div>';
+      return;
+    }
     if (state.loading) {
       s.classList.add('info');
       s.innerHTML = '<div>⏳ กำลังค้นหาร้านในระยะ ' + state.radiusKm + ' กม.…' +
@@ -920,6 +929,7 @@
       state.source = null;
     }
     state.loading = true;
+    state.liveRefresh = Boolean(keepShown);
     render();
     try {
       const json = await overpass(buildQuery(center, radiusKm), ctrl.signal, () => {
@@ -940,6 +950,7 @@
     }
     state.loading = false;
     state.slow = false;
+    state.liveRefresh = false;
     render();
   }
 

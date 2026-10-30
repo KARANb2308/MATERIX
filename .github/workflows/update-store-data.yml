@@ -1,10 +1,10 @@
-# สร้างข้อมูลร้านวัสดุก่อสร้างทั่วประเทศจาก OpenStreetMap + Overture Maps ใหม่ทุกสัปดาห์ แล้ว commit ไว้ในโฟลเดอร์ data/
+# สร้างข้อมูลร้านวัสดุก่อสร้างทั่วประเทศจาก OpenStreetMap + Overture Maps ใหม่ทุกวัน แล้ว commit ไว้ในโฟลเดอร์ data/
 name: Update store data
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 19 * * 0'   # ทุกวันจันทร์ 02:17 เวลาไทย
+    - cron: '17 19 * * *'   # ทุกวัน 02:17 เวลาไทย
   push:
     branches: [claude/hopeful-brahmagupta-dcayya]
     paths:
