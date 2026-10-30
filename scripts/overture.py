@@ -156,7 +156,7 @@ def fetch(log=print):
                          'primary': r['primary_cat'], 'tags': to_tags(r)})
 
         log('Overture categories (count, kept?, primary):')
-        for (cat, kept), n in report.most_common(120):
+        for (cat, kept), n in report.most_common(200):
             log(f'  {n:6d}  {"KEEP" if kept else "skip"}  {cat}')
         return release, rows
     raise RuntimeError(f'Overture unavailable: {last_err}')
