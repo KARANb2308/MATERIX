@@ -19,6 +19,7 @@ window.MATERIX_CONFIG = {
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
   ],
   nominatimUrl: 'https://nominatim.openstreetmap.org',
+  photonUrl: 'https://photon.komoot.io',
   tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   tileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">ผู้ร่วมให้ข้อมูล OpenStreetMap</a>',
 

@@ -23,6 +23,7 @@
   const MAX_SAVED_ENTRIES = 4;
   const MAX_SAVED_CHARS = 1500000;
   const HEDGE_MS = 6000;
+  const LIVE_MAX_MS = 30000; // ดึงสดจาก Overpass รอนานสุดเท่านี้ แล้วกลับไปใช้ข้อมูลที่มีอยู่
 
 
   let preferredEndpoint = loadJSON(ENDPOINT_KEY, null);
@@ -314,6 +315,7 @@
       };
       const onAbort = () => finish(false, new DOMException('Aborted', 'AbortError'));
       outerSignal.addEventListener('abort', onAbort);
+      setTimeout(() => finish(false, new Error('ไม่มีเซิร์ฟเวอร์ตอบภายใน ' + LIVE_MAX_MS / 1000 + ' วินาที')), LIVE_MAX_MS);
 
       const launch = () => {
         if (done || next >= endpoints.length) return false;
@@ -464,12 +466,35 @@
     return Math.round(min / 60) + ' ชม.';
   }
 
-  /* ---------------- Nominatim ---------------- */
-  async function geocode(q) {
+  /* ---------------- ค้นหาชื่อสถานที่ (Photon + Nominatim) ---------------- */
+  const TH_BBOX = '97.3,5.6,105.7,20.5';
+
+  function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+  }
+
+  async function geocodeNominatim(q) {
     const url = CFG.nominatimUrl + '/search?format=jsonv2&limit=6&countrycodes=th&accept-language=th&q=' + encodeURIComponent(q);
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
+    return (await res.json()).map((r) => {
+      const parts = String(r.display_name).split(',').map((x) => x.trim());
+      return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), name: r.name || parts[0], detail: parts.slice(1, 4).join(', ') };
+    });
+  }
+
+  // Photon: เร็ว พิมพ์ผิดเล็กน้อยก็เจอ และเรียงผลใกล้ตำแหน่งปัจจุบันก่อน
+  async function geocodePhoton(q) {
+    const url = CFG.photonUrl + '/api/?limit=6&bbox=' + TH_BBOX + '&lat=' + state.center.lat.toFixed(4) +
+      '&lon=' + state.center.lng.toFixed(4) + '&q=' + encodeURIComponent(q);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return ((await res.json()).features || []).map((f) => {
+      const p = f.properties || {};
+      const name = p.name || p.street || p.district || p.city || '';
+      const detail = unique([p.district, p.city, p.county, p.state].filter((x) => x && x !== name)).join(', ');
+      return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], name, detail };
+    }).filter((x) => x.name);
   }
 
   const reverseCache = new Map();
@@ -511,6 +536,7 @@
     dataTime: null,
     source: null,
     loading: false,
+    liveRefresh: false,
     slow: false,
     error: null,
     shown: PAGE_SIZE,
@@ -734,6 +760,12 @@
   function renderStatus(filtered) {
     const s = els.status;
     s.className = 'status';
+    if (state.loading && state.liveRefresh) {
+      s.classList.add('info');
+      s.innerHTML = '<div>⏳ กำลังดึงข้อมูลสดจากแผนที่ออนไลน์ (เซิร์ฟเวอร์สาธารณะ อาจใช้เวลาถึง ' + LIVE_MAX_MS / 1000 +
+        ' วินาที) — ระหว่างนี้ดูและโทรหาร้านด้านล่างได้เลย</div>';
+      return;
+    }
     if (state.loading) {
       s.classList.add('info');
       s.innerHTML = '<div>⏳ กำลังค้นหาร้านในระยะ ' + state.radiusKm + ' กม.…' +
@@ -897,6 +929,7 @@
       state.source = null;
     }
     state.loading = true;
+    state.liveRefresh = Boolean(keepShown);
     render();
     try {
       const json = await overpass(buildQuery(center, radiusKm), ctrl.signal, () => {
@@ -917,6 +950,7 @@
     }
     state.loading = false;
     state.slow = false;
+    state.liveRefresh = false;
     render();
   }
 
@@ -954,35 +988,69 @@
     loadNearby();
   }
 
+  // ขอตำแหน่งคร่าว ๆ ก่อน (จากเครือข่าย ได้แทบทันที) แล้วค่อยขอ GPS ละเอียดเบื้องหลัง
+  // ถ้าตำแหน่งละเอียดต่างจากเดิมพอสมควรค่อยขยับจุดค้นหาให้
+  function showMe(pos) {
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    state.me = { lat, lng };
+    if (meMarker) meMarker.remove();
+    meMarker = L.circleMarker([lat, lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1 })
+      .bindTooltip('คุณอยู่ที่นี่' + (accuracy ? ' (±' + Math.round(accuracy) + ' ม.)' : ''))
+      .addTo(map);
+    return { lat, lng, accuracy };
+  }
+
   function locate() {
     if (!('geolocation' in navigator)) {
       toast('เบราว์เซอร์นี้ไม่รองรับการระบุตำแหน่ง ลองค้นหาชื่อสถานที่แทน');
       return;
     }
     const btn = $('#btnLocate');
+    const label = btn.querySelector('span');
+    const reset = () => {
+      btn.disabled = false;
+      label.textContent = 'ใช้ตำแหน่งของฉัน';
+    };
     btn.disabled = true;
-    btn.querySelector('span').textContent = 'กำลังหาตำแหน่ง…';
-    navigator.geolocation.getCurrentPosition((pos) => {
-      btn.disabled = false;
-      btn.querySelector('span').textContent = 'ใช้ตำแหน่งของฉัน';
-      const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-      state.me = { lat, lng };
-      state.usedGps = true;
-      if (meMarker) meMarker.remove();
-      meMarker = L.circleMarker([lat, lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1 })
-        .bindTooltip('คุณอยู่ที่นี่' + (accuracy ? ' (±' + Math.round(accuracy) + ' ม.)' : ''))
-        .addTo(map);
-      setCenter(lat, lng, MY_LOCATION, { refineLabel: true });
-    }, (err) => {
-      btn.disabled = false;
-      btn.querySelector('span').textContent = 'ใช้ตำแหน่งของฉัน';
+    label.textContent = 'กำลังหาตำแหน่ง…';
+
+    const fail = (err) => {
+      reset();
       const msg = {
         1: 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง — เปิดสิทธิ์ตำแหน่งในการตั้งค่าเบราว์เซอร์ หรือค้นหาชื่อสถานที่แทน',
-        2: 'หาตำแหน่งไม่ได้ในขณะนี้ ลองใหม่อีกครั้ง',
-        3: 'หาตำแหน่งนานเกินไป ลองใหม่อีกครั้ง'
+        2: 'หาตำแหน่งไม่ได้ในขณะนี้ ลองใหม่อีกครั้ง หรือค้นหาชื่อสถานที่แทน',
+        3: 'หาตำแหน่งนานเกินไป ลองใหม่อีกครั้ง หรือค้นหาชื่อสถานที่แทน'
       }[err.code] || 'หาตำแหน่งไม่สำเร็จ';
       toast(msg, 5000);
-    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    };
+
+    const refine = (first) => {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const centerIsMine = state.center.label.startsWith(MY_LOCATION) &&
+          distanceKm(state.center, first) < 0.01;
+        const me = showMe(pos);
+        if (centerIsMine && distanceKm(first, me) > Math.max(0.3, state.radiusKm * 0.15)) {
+          setCenter(me.lat, me.lng, MY_LOCATION, { refineLabel: true });
+        }
+      }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+    };
+
+    navigator.geolocation.getCurrentPosition((pos) => {
+      reset();
+      state.usedGps = true;
+      const me = showMe(pos);
+      setCenter(me.lat, me.lng, MY_LOCATION, { refineLabel: true });
+      if (!me.accuracy || me.accuracy > 100) refine(me);
+    }, (err) => {
+      if (err.code === 1) return fail(err);
+      // ตำแหน่งคร่าว ๆ ไม่ได้ ลองแบบละเอียดอีกครั้ง
+      navigator.geolocation.getCurrentPosition((pos) => {
+        reset();
+        state.usedGps = true;
+        const me = showMe(pos);
+        setCenter(me.lat, me.lng, MY_LOCATION, { refineLabel: true });
+      }, fail, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    }, { enableHighAccuracy: false, timeout: 5000, maximumAge: 5 * 60 * 1000 });
   }
 
   /* ---------------- โหมดปักหมุด ---------------- */
@@ -1327,16 +1395,82 @@
     toastTimer = setTimeout(() => { t.hidden = true; }, ms);
   }
 
-  /* ---------------- ค้นหาสถานที่ ---------------- */
+  /* ---------------- ช่องค้นหาด้านบน ---------------- */
+  // แสดงสิ่งที่หาได้ทันทีจากข้อมูลในเว็บ (หมวดสินค้า ห้างวัสดุ ร้านในพื้นที่ เมือง) ก่อน แล้วต่อด้วยชื่อสถานที่จากออนไลน์
   const placeResults = $('#placeResults');
   let placeItems = [];
+  let placeSeq = 0;
 
   function hidePlaces() {
     placeResults.hidden = true;
   }
 
-  $('#placeForm').addEventListener('submit', async (e) => {
+  function localSuggestions(q) {
+    const qq = q.toLowerCase().replace(/^ร้าน\s*/, '').trim();
+    if (!qq) return [];
+    const out = [];
+    CATS.forEach((c) => {
+      if ((c.re && c.re.test(q)) || (qq.length >= 2 && (c.label.includes(qq) || c.short.includes(qq)))) {
+        out.push({ kind: 'cat', id: c.id, name: c.icon + ' ' + c.label, detail: 'กรองร้านหมวดนี้ในพื้นที่ที่เลือก' });
+      }
+    });
+    CFG.chains.forEach((c, i) => {
+      if (c.match.some((m) => qq.includes(m.toLowerCase()) || (qq.length >= 3 && m.toLowerCase().includes(qq)))) {
+        out.push({ kind: 'chain', i, name: '🏬 สาขา' + c.name, detail: 'หาสาขาใกล้ตำแหน่งนี้' });
+      }
+    });
+    storesInRadius()
+      .filter((s) => (s.name + ' ' + s.nameAlt + ' ' + s.brand).toLowerCase().includes(qq))
+      .sort((a, b) => a.dist - b.dist).slice(0, 5)
+      .forEach((s) => out.push({ kind: 'store', id: s.id, name: CAT_BY_ID[s.primary].icon + ' ' + s.name,
+        detail: fmtDist(s.dist) + (s.phones.length ? ' · ' + phoneDisplay(s.phones[0]) : '') }));
+    CFG.cities.forEach((c) => {
+      if (qq.length >= 2 && c.label.includes(qq)) out.push({ kind: 'place', lat: c.lat, lng: c.lng, name: c.label, detail: 'เมือง' });
+    });
+    return out;
+  }
+
+  function renderPlaceResults(q, local, online, pending) {
+    placeItems = local.concat(online.map((p) => Object.assign({ kind: 'place' }, p)));
+    const item = (p, i) => '<li><button type="button" data-i="' + i + '"><b>' + esc(p.name) + '</b><small>' + esc(p.detail || '') + '</small></button></li>';
+    const rows = [];
+    if (local.length) rows.push('<li class="group">ในเว็บนี้</li>', ...local.map(item));
+    rows.push('<li class="group">ชื่อสถานที่</li>');
+    if (online.length) rows.push(...online.map((p, i) => item(p, local.length + i)));
+    else rows.push('<li class="empty">' + (pending ? 'กำลังค้นหาสถานที่…' : 'ไม่พบสถานที่ “' + esc(q) + '” ลองพิมพ์ชื่ออำเภอหรือจังหวัด') + '</li>');
+    placeResults.innerHTML = rows.join('');
+    placeResults.hidden = false;
+  }
+
+  // full = กด Enter/ปุ่มค้นหา (ใช้ Nominatim ด้วย) ส่วนตอนพิมพ์ใช้แค่ Photon ตามเงื่อนไขการใช้งานของ Nominatim
+  function runPlaceSearch(q, full) {
+    const seq = ++placeSeq;
+    const local = localSuggestions(q);
+    let online = [];
+    const sources = full ? [geocodePhoton(q), geocodeNominatim(q)] : [geocodePhoton(q)];
+    let pending = sources.length;
+    renderPlaceResults(q, local, online, true);
+    sources.forEach((p) => withTimeout(p, 8000).then((list) => {
+      if (seq !== placeSeq) return;
+      const seen = new Set(online.map((x) => x.name + x.lat.toFixed(2) + x.lng.toFixed(2)));
+      online = online.concat(list.filter((x) => !seen.has(x.name + x.lat.toFixed(2) + x.lng.toFixed(2))));
+    }, () => {}).finally(() => {
+      pending--;
+      if (seq !== placeSeq) return;
+      if (full && !pending && !local.length && online.length === 1) {
+        hidePlaces();
+        setCenter(online[0].lat, online[0].lng, online[0].name);
+        return;
+      }
+      if (!placeResults.hidden || full) renderPlaceResults(q, local, online, pending > 0);
+    }));
+  }
+
+  let placeTimer = null;
+
+  $('#placeForm').addEventListener('submit', (e) => {
     e.preventDefault();
+    clearTimeout(placeTimer);
     const q = $('#placeInput').value.trim();
     if (!q) return;
     const coord = q.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
@@ -1345,36 +1479,46 @@
       setCenter(parseFloat(coord[1]), parseFloat(coord[2]), '');
       return;
     }
-    placeResults.hidden = false;
-    placeResults.innerHTML = '<li class="empty">กำลังค้นหา…</li>';
-    try {
-      const list = await geocode(q);
-      placeItems = list.map((r) => {
-        const parts = String(r.display_name).split(',').map((x) => x.trim());
-        return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), name: r.name || parts[0], detail: parts.slice(1, 4).join(', ') };
-      });
-      if (!placeItems.length) {
-        placeResults.innerHTML = '<li class="empty">ไม่พบสถานที่ “' + esc(q) + '” ลองพิมพ์ชื่ออำเภอหรือจังหวัด</li>';
-        return;
-      }
-      if (placeItems.length === 1) {
-        hidePlaces();
-        setCenter(placeItems[0].lat, placeItems[0].lng, placeItems[0].name);
-        return;
-      }
-      placeResults.innerHTML = placeItems.map((p, i) =>
-        '<li><button type="button" data-i="' + i + '"><b>' + esc(p.name) + '</b><small>' + esc(p.detail) + '</small></button></li>').join('');
-    } catch (err) {
-      placeResults.innerHTML = '<li class="empty">ค้นหาไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่</li>';
+    runPlaceSearch(q, true);
+  });
+
+  $('#placeInput').addEventListener('input', (e) => {
+    clearTimeout(placeTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) {
+      placeSeq++;
+      hidePlaces();
+      return;
     }
+    placeTimer = setTimeout(() => runPlaceSearch(q, false), 400);
   });
 
   placeResults.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-i]');
     if (!b) return;
     const p = placeItems[Number(b.dataset.i)];
+    clearTimeout(placeTimer);
+    placeSeq++;
     hidePlaces();
-    setCenter(p.lat, p.lng, p.name);
+    if (p.kind === 'place') {
+      setCenter(p.lat, p.lng, p.name);
+    } else if (p.kind === 'cat') {
+      state.cats = new Set([p.id]);
+      state.chain = null;
+      state.shown = PAGE_SIZE;
+      switchTab('nearby');
+      render();
+    } else if (p.kind === 'chain') {
+      state.chain = CFG.chains[p.i];
+      state.cats.clear();
+      switchTab('nearby');
+      if (state.radiusKm < 20) setRadius(20);
+      else render();
+    } else if (p.kind === 'store') {
+      clearFilters();
+      switchTab('nearby');
+      setActive(p.id);
+    }
   });
 
   document.addEventListener('click', (e) => {

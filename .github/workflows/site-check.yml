@@ -1,0 +1,34 @@
+# เปิดเว็บด้วยเบราว์เซอร์จริงที่ต่ออินเทอร์เน็ต แล้วจับเวลาการค้นหาร้าน/สถานที่ ทั้งเว็บที่ใช้งานจริงและโค้ดใน branch นี้
+name: Site check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/hopeful-brahmagupta-dcayya]
+    paths:
+      - scripts/site_check.mjs
+      - .github/workflows/site-check.yml
+      - js/**
+      - index.html
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.63.0 && npx playwright install --with-deps chromium
+
+      - name: Serve this branch
+        run: python3 -m http.server 8000 --bind 127.0.0.1 > /dev/null 2>&1 &
+
+      - name: Check sites
+        run: node scripts/site_check.mjs
+        env:
+          SITES: live=https://karanb2308.github.io/MATERIX/,branch=http://127.0.0.1:8000/
