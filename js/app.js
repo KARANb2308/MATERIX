@@ -191,9 +191,10 @@
       const alt = t['name:th'] && t.name && t.name !== t['name:th'] ? t.name : t['name:en'];
       if (alt && alt !== name) nameAlt = alt;
     }
+    const fromOverture = el.type === 'overture';
     return {
-      id: 'osm-' + el.type + '-' + el.id,
-      source: 'osm',
+      id: fromOverture ? 'ov-' + el.id : 'osm-' + el.type + '-' + el.id,
+      source: fromOverture ? 'overture' : 'osm',
       osmType: el.type,
       osmId: el.id,
       named: Boolean(name),
@@ -392,6 +393,71 @@
     persistCache();
   }
 
+  /* ---------------- ข้อมูลร้านที่สร้างไว้ล่วงหน้า (data/) ---------------- */
+  // แบ่งเป็นช่องตาราง โหลดเฉพาะช่องที่ทับวงค้นหา ไฟล์อยู่เว็บเดียวกันจึงเร็วและไม่ขึ้นกับเซิร์ฟเวอร์แผนที่
+  const OSM_TYPES = { n: 'node', w: 'way', r: 'relation', o: 'overture' };
+  const staticData = { index: undefined, tiles: new Map(), pending: new Map() };
+
+  async function loadStaticIndex() {
+    if (staticData.index !== undefined) return staticData.index;
+    try {
+      const res = await fetch(CFG.dataUrl + 'index.json', { cache: 'no-cache' });
+      const json = res.ok ? await res.json() : null;
+      staticData.index = json && json.cells && json.cell ? json : null;
+    } catch (e) {
+      staticData.index = null;
+    }
+    return staticData.index;
+  }
+
+  function tileKeysFor(index, center, radiusKm) {
+    const [s, w, n, e] = bboxOf(center, radiusKm).map(Number);
+    const keys = [];
+    for (let i = Math.floor(s / index.cell); i <= Math.floor(n / index.cell); i++) {
+      for (let j = Math.floor(w / index.cell); j <= Math.floor(e / index.cell); j++) {
+        const key = (i * index.cell).toFixed(index.dp) + '_' + (j * index.cell).toFixed(index.dp);
+        if (index.cells[key]) keys.push(key);
+      }
+    }
+    return keys;
+  }
+
+  function loadTile(key) {
+    if (staticData.tiles.has(key)) return Promise.resolve(staticData.tiles.get(key));
+    if (!staticData.pending.has(key)) {
+      const p = fetch(CFG.dataUrl + 'tiles/' + key + '.json')
+        .then((res) => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then((rows) => {
+          const stores = rows.map((r) => normalizeOsm({ type: OSM_TYPES[r[0]], id: r[1], lat: r[2], lon: r[3], tags: r[4] }))
+            .filter(Boolean);
+          staticData.tiles.set(key, stores);
+          return stores;
+        })
+        .finally(() => staticData.pending.delete(key));
+      staticData.pending.set(key, p);
+    }
+    return staticData.pending.get(key);
+  }
+
+  async function staticOverture(center, radiusKm) {
+    const index = await loadStaticIndex();
+    if (!index) return [];
+    try {
+      const lists = await Promise.all(tileKeysFor(index, center, radiusKm).map(loadTile));
+      return [].concat(...lists).filter((s) => s.source === 'overture');
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' });
+  }
+
   function fmtAge(ms) {
     const min = Math.round(ms / 60000);
     if (min < 60) return min + ' นาที';
@@ -443,6 +509,7 @@
     chain: null,
     osm: [],
     dataTime: null,
+    source: null,
     loading: false,
     slow: false,
     error: null,
@@ -580,7 +647,7 @@
     }
     out.push('<a class="act" href="' + esc(directionsUrl(s)) + '" target="_blank" rel="noopener">🧭 นำทาง</a>');
     if (!compact) {
-      if (!s.phones.length && s.source === 'osm' && s.named) {
+      if (!s.phones.length && (s.source === 'osm' || s.source === 'overture') && s.named) {
         const q = s.name + ' ' + (s.address || '') + ' เบอร์โทร';
         out.push('<a class="act muted" href="https://www.google.com/search?q=' + encodeURIComponent(q) +
           '" target="_blank" rel="noopener">🔎 หาเบอร์</a>');
@@ -675,18 +742,28 @@
       return;
     }
     const parts = [];
-    if (state.error) {
+    if (state.error && state.source === 'static') {
+      // กด "ดึงข้อมูลล่าสุด" แล้วเซิร์ฟเวอร์แผนที่ไม่ตอบ — ยังมีข้อมูลเดิมให้ดู
       s.classList.add('error');
-      parts.push('<div>⚠️ โหลดข้อมูลร้านจากแผนที่ไม่สำเร็จ (เซิร์ฟเวอร์อาจไม่ว่างหรือไม่มีอินเทอร์เน็ต)' +
+      parts.push('<div>⚠️ ดึงข้อมูลล่าสุดไม่สำเร็จ (เซิร์ฟเวอร์แผนที่ไม่ว่าง) — แสดงข้อมูล ณ ' + esc(fmtDate(state.dataTime)) + ' แทน</div>' +
+        '<button type="button" class="btn btn-sm" data-act="refresh">ลองดึงอีกครั้ง</button>');
+    } else if (state.error) {
+      s.classList.add('error');
+      parts.push('<div>⚠️ โหลดข้อมูลร้านไม่สำเร็จ (ไม่มีอินเทอร์เน็ต หรือเซิร์ฟเวอร์แผนที่ไม่ว่าง)' +
         (filtered.length ? ' — แสดงเฉพาะร้านที่มีข้อมูลอยู่ในเครื่องแล้ว' : '') + '</div>' +
         '<button type="button" class="btn btn-sm" data-act="retry">ลองอีกครั้ง</button>');
     } else {
       const withPhone = filtered.filter((x) => x.phones.length).length;
       const age = state.dataTime ? Date.now() - state.dataTime : 0;
+      let dataInfo = '';
+      if (state.source === 'static') {
+        dataInfo = '<span>ข้อมูล ณ ' + esc(fmtDate(state.dataTime)) +
+          ' · <button type="button" class="link-btn" data-act="refresh">ดึงข้อมูลล่าสุด</button></span>';
+      } else if (age > 10 * 60 * 1000) {
+        dataInfo = '<span>ข้อมูลเมื่อ ' + fmtAge(age) + ' ที่แล้ว · <button type="button" class="link-btn" data-act="refresh">โหลดใหม่</button></span>';
+      }
       parts.push('<div class="summary"><span>พบ <b>' + filtered.length + '</b> ร้าน ในระยะ ' + state.radiusKm + ' กม.</span>' +
-        '<span>มีเบอร์โทร <b>' + withPhone + '</b> ร้าน</span>' +
-        (age > 10 * 60 * 1000 ? '<span>ข้อมูลเมื่อ ' + fmtAge(age) + ' ที่แล้ว · <button type="button" class="link-btn" data-act="refresh">โหลดใหม่</button></span>' : '') +
-        '</div>');
+        '<span>มีเบอร์โทร <b>' + withPhone + '</b> ร้าน</span>' + dataInfo + '</div>');
     }
     if (state.chain) {
       parts.push('<div>กำลังแสดงเฉพาะสาขา <b>' + esc(state.chain.name) + '</b> ' +
@@ -704,7 +781,8 @@
     return '<li class="empty-state"><div class="big">🔍</div>' +
       '<p>ไม่พบร้านที่ตรงเงื่อนไขในระยะ ' + state.radiusKm + ' กม.</p>' +
       (nr ? '<button type="button" class="btn btn-primary" data-act="expand">ขยายระยะเป็น ' + nr + ' กม.</button> ' : '') +
-      (filtersOn ? '<button type="button" class="btn" data-act="clear-filters">ล้างตัวกรอง</button>' : '') +
+      (filtersOn ? '<button type="button" class="btn" data-act="clear-filters">ล้างตัวกรอง</button> ' : '') +
+      (state.source === 'static' ? '<button type="button" class="btn" data-act="refresh">ค้นหาสดจากแผนที่ออนไลน์</button>' : '') +
       '</li>';
   }
 
@@ -762,32 +840,63 @@
   }
 
   /* ---------------- โหลดร้าน ---------------- */
+  // ลำดับ: ข้อมูลสดที่เคยดึงไว้ (ใหม่กว่า) → ข้อมูลที่สร้างไว้ล่วงหน้า → ดึงสดจาก Overpass
+  // opts.live = กด "ดึงข้อมูลล่าสุด" ให้ข้ามไปดึงสดเลย
   async function loadNearby(opts = {}) {
     if (currentAbort) currentAbort.abort();
     currentAbort = null;
     const seq = ++reqSeq;
     const center = { lat: state.center.lat, lng: state.center.lng };
     const radiusKm = state.radiusKm;
-    if (opts.force) dropCacheFor(center, radiusKm);
+    state.error = null;
+    state.slow = false;
+    if (opts.live) dropCacheFor(center, radiusKm);
 
-    const hit = coveringEntry(center, radiusKm);
+    const hit = !opts.live && coveringEntry(center, radiusKm);
     if (hit) {
-      state.osm = hit.stores;
-      state.dataTime = hit.t;
-      state.loading = false;
-      state.slow = false;
-      state.error = null;
+      const extra = await staticOverture(center, radiusKm);
+      if (seq !== reqSeq) return;
+      Object.assign(state, { osm: dedupe(hit.stores.concat(extra)), dataTime: hit.t, source: 'live', loading: false });
       render();
       return;
     }
 
+    if (!opts.live && await loadStatic(seq, center, radiusKm)) return;
+    if (seq !== reqSeq) return;
+    await loadLive(seq, center, radiusKm, opts.live);
+  }
+
+  async function loadStatic(seq, center, radiusKm) {
+    const index = await loadStaticIndex();
+    if (seq !== reqSeq || !index) return seq !== reqSeq;
+    const keys = tileKeysFor(index, center, radiusKm);
+    const ready = keys.filter((k) => staticData.tiles.has(k));
+    if (ready.length < keys.length) {
+      state.osm = dedupe(ready.flatMap((k) => staticData.tiles.get(k)).concat(overlappingStores(center, radiusKm)));
+      state.loading = true;
+      render();
+    }
+    try {
+      const lists = await Promise.all(keys.map(loadTile));
+      if (seq !== reqSeq) return true;
+      Object.assign(state, { osm: dedupe([].concat(...lists)), dataTime: Date.parse(index.generated), source: 'static', loading: false });
+      render();
+      return true;
+    } catch (e) {
+      console.warn('Static data error', e);
+      return seq !== reqSeq;
+    }
+  }
+
+  async function loadLive(seq, center, radiusKm, keepShown) {
     const ctrl = new AbortController();
     currentAbort = ctrl;
-    state.osm = overlappingStores(center, radiusKm);
-    state.dataTime = null;
+    if (!keepShown) {
+      state.osm = overlappingStores(center, radiusKm);
+      state.dataTime = null;
+      state.source = null;
+    }
     state.loading = true;
-    state.slow = false;
-    state.error = null;
     render();
     try {
       const json = await overpass(buildQuery(center, radiusKm), ctrl.signal, () => {
@@ -797,8 +906,10 @@
       });
       if (seq !== reqSeq) return;
       const entry = addToCache(center, radiusKm, dedupe(json.elements.map(normalizeOsm).filter(Boolean)));
-      state.osm = entry.stores;
-      state.dataTime = entry.t;
+      // Overpass มีแต่ร้าน OSM — เติมร้านจาก Overture ที่อยู่ในข้อมูลสร้างล่วงหน้ากลับเข้าไป
+      const extra = await staticOverture(center, radiusKm);
+      if (seq !== reqSeq) return;
+      Object.assign(state, { osm: dedupe(entry.stores.concat(extra)), dataTime: entry.t, source: 'live' });
     } catch (e) {
       if (seq !== reqSeq) return;
       console.warn('Overpass error', e);
@@ -1035,7 +1146,8 @@
     const actEl = e.target.closest('[data-act]');
     if (!actEl) return;
     const act = actEl.dataset.act;
-    if (act === 'retry' || act === 'refresh') { loadNearby({ force: true }); return; }
+    if (act === 'retry') { loadNearby(); return; }
+    if (act === 'refresh') { loadNearby({ live: true }); return; }
     if (act === 'expand') { const nr = nextRadius(); if (nr) setRadius(nr); return; }
     if (act === 'clear-filters') { clearFilters(); return; }
     if (act === 'clear-chain') { state.chain = null; render(); return; }
