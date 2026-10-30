@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MATERIX — ค้นหาร้านวัสดุก่อสร้างและเช่าอุปกรณ์ใกล้คุณ</title>
+  <meta name="description" content="ค้นหาร้านวัสดุก่อสร้าง เหล็ก ปูน ไม้ กระเบื้อง สี ไฟฟ้า ประปา และร้านเช่าเครื่องมือก่อสร้างใกล้คุณ พร้อมเบอร์โทร LINE Facebook และเส้นทาง">
+  <meta name="theme-color" content="#1f2933">
+  <meta property="og:title" content="MATERIX — ค้นหาร้านวัสดุก่อสร้างใกล้คุณ">
+  <meta property="og:description" content="หาร้านวัสดุและเช่าอุปกรณ์ก่อสร้างใกล้ตัว หรือเลือกตำแหน่งอื่นบนแผนที่ พร้อมช่องทางติดต่อ">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f2933'/%3E%3Cpath d='M14 46V18l18 14 18-14v28' fill='none' stroke='%23fcc419' stroke-width='7' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-view="list">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="MATERIX หน้าแรก">
+      <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#fcc419"/><path d="M14 46V18l18 14 18-14v28" fill="none" stroke="#1f2933" stroke-width="7" stroke-linejoin="round"/></svg>
+      <span class="brand-text">
+        <strong>MATERIX</strong>
+        <small>หาร้านวัสดุ &amp; เช่าอุปกรณ์ก่อสร้างใกล้คุณ</small>
+      </span>
+    </a>
+    <nav class="topnav">
+      <button type="button" class="nav-btn" id="btnAddStore"><span aria-hidden="true">＋</span> เพิ่มร้านของคุณ</button>
+      <button type="button" class="nav-btn ghost" id="btnAbout" aria-label="เกี่ยวกับเว็บนี้">?</button>
+    </nav>
+  </header>
+
+  <section class="searchbar" aria-label="ตำแหน่งและตัวกรอง">
+    <div class="loc-row">
+      <button type="button" class="btn btn-primary" id="btnLocate">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8" fill="none"/></svg>
+        <span>ใช้ตำแหน่งของฉัน</span>
+      </button>
+      <form class="place-search" id="placeForm" role="search">
+        <input type="search" id="placeInput" placeholder="ค้นหาสถานที่ เช่น บางนา, ตลาดไท, อ.เมืองขอนแก่น" autocomplete="off" aria-label="ค้นหาสถานที่">
+        <button type="submit" class="btn" aria-label="ค้นหา">ค้นหา</button>
+        <ul class="place-results" id="placeResults" hidden></ul>
+      </form>
+      <select id="citySelect" class="select" aria-label="เลือกจังหวัดหรือเมือง">
+        <option value="">เลือกเมือง…</option>
+      </select>
+      <button type="button" class="btn" id="btnPick" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+        <span>ปักหมุดบนแผนที่</span>
+      </button>
+    </div>
+    <div class="filter-row">
+      <div class="loc-label">
+        <span class="dot" aria-hidden="true"></span>
+        <span>ค้นหารอบ ๆ</span>
+        <strong id="locLabel">กรุงเทพมหานคร</strong>
+        <label class="radius">
+          ในระยะ
+          <select id="radiusSelect" class="select select-sm" aria-label="ระยะค้นหา"></select>
+        </label>
+      </div>
+      <div class="chips" id="catChips" role="group" aria-label="หมวดหมู่สินค้า"></div>
+    </div>
+  </section>
+
+  <main class="layout">
+    <section class="panel list-panel" aria-label="รายชื่อร้าน">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab active" data-tab="nearby" aria-selected="true">ร้านใกล้ตำแหน่งนี้ <span class="tab-count" id="countNearby">0</span></button>
+        <button type="button" role="tab" class="tab" data-tab="favs" aria-selected="false">ร้านที่บันทึกไว้ <span class="tab-count" id="countFavs">0</span></button>
+        <button type="button" role="tab" class="tab" data-tab="chains" aria-selected="false">ห้างวัสดุทั่วประเทศ</button>
+      </div>
+
+      <div class="tab-body" id="tabNearby">
+        <div class="list-toolbar">
+          <input type="search" id="textFilter" class="input" placeholder="กรองชื่อร้าน / สินค้า" aria-label="กรองชื่อร้าน">
+          <select id="sortSelect" class="select select-sm" aria-label="เรียงลำดับ">
+            <option value="distance">ใกล้ที่สุด</option>
+            <option value="contact">ข้อมูลติดต่อครบก่อน</option>
+            <option value="name">ชื่อ ก-ฮ</option>
+          </select>
+          <label class="toggle">
+            <input type="checkbox" id="phoneOnly">
+            <span>เฉพาะร้านที่มีเบอร์</span>
+          </label>
+        </div>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+        <ol class="results" id="results"></ol>
+        <button type="button" class="btn btn-block" id="btnMore" hidden>แสดงเพิ่มเติม</button>
+      </div>
+
+      <div class="tab-body" id="tabFavs" hidden>
+        <p class="hint">กดรูปหัวใจที่ร้านเพื่อบันทึกไว้ดูภายหลัง (บันทึกในเครื่องนี้)</p>
+        <ol class="results" id="favResults"></ol>
+      </div>
+
+      <div class="tab-body" id="tabChains" hidden>
+        <p class="hint">ห้างวัสดุก่อสร้างที่มีสาขาทั่วประเทศ สั่งออนไลน์หรือโทรสอบถามสินค้าได้ กด “หาสาขาใกล้ฉัน” เพื่อดูสาขาบนแผนที่</p>
+        <ul class="chain-list" id="chainList"></ul>
+      </div>
+
+      <p class="data-note">
+        ข้อมูลร้านจาก <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>
+        และร้านที่ลงทะเบียนกับเรา ข้อมูลอาจไม่ครบหรือไม่เป็นปัจจุบัน กรุณาโทรยืนยันก่อนเดินทาง
+      </p>
+    </section>
+
+    <section class="panel map-panel" aria-label="แผนที่">
+      <div id="map"></div>
+      <button type="button" class="map-float" id="btnSearchArea" hidden>ค้นหาในบริเวณนี้</button>
+      <div class="pick-banner" id="pickBanner" hidden>
+        <span id="pickText">แตะบนแผนที่เพื่อเลือกตำแหน่ง</span>
+        <button type="button" class="btn btn-sm" id="btnPickCancel">ยกเลิก</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="view-switch" role="group" aria-label="สลับมุมมอง">
+    <button type="button" data-view="list" class="active">📋 รายการ</button>
+    <button type="button" data-view="map">🗺️ แผนที่</button>
+  </div>
+
+  <!-- เพิ่มร้าน -->
+  <dialog class="dialog" id="addDialog" aria-labelledby="addTitle">
+    <form method="dialog" class="dialog-inner" id="addForm" novalidate>
+      <header class="dialog-head">
+        <h2 id="addTitle">เพิ่มร้านของคุณ</h2>
+        <button type="button" class="icon-btn" data-close aria-label="ปิด">✕</button>
+      </header>
+      <div class="dialog-body">
+        <p class="hint">
+          ร้านที่เพิ่มจะแสดงในเครื่องนี้ทันที หากต้องการให้ทุกคนเห็น กด “คัดลอกข้อมูลร้าน” หลังบันทึก แล้วส่งให้ผู้ดูแลเว็บ
+          หรือเพิ่มร้านใน <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>
+        </p>
+        <label class="field">
+          <span>ชื่อร้าน *</span>
+          <input class="input" name="name" required maxlength="120" placeholder="เช่น ช.การช่าง วัสดุก่อสร้าง">
+        </label>
+        <fieldset class="field">
+          <legend>ขายอะไร / บริการอะไร * <small>(เลือกได้หลายข้อ)</small></legend>
+          <div class="check-chips" id="addCats"></div>
+        </fieldset>
+        <div class="field-grid">
+          <label class="field">
+            <span>เบอร์โทร *</span>
+            <input class="input" name="phone" type="tel" required maxlength="60" placeholder="08x-xxx-xxxx (หลายเบอร์คั่นด้วย ,)">
+          </label>
+          <label class="field">
+            <span>LINE ID</span>
+            <input class="input" name="line" maxlength="120" placeholder="@shopname หรือ line id">
+          </label>
+          <label class="field">
+            <span>Facebook</span>
+            <input class="input" name="facebook" maxlength="200" placeholder="ลิงก์เพจ หรือชื่อเพจ">
+          </label>
+          <label class="field">
+            <span>เว็บไซต์</span>
+            <input class="input" name="website" maxlength="200" placeholder="www.example.com">
+          </label>
+        </div>
+        <label class="field">
+          <span>ที่อยู่</span>
+          <input class="input" name="address" maxlength="250" placeholder="เลขที่ ถนน ตำบล อำเภอ จังหวัด">
+        </label>
+        <div class="field-grid">
+          <label class="field">
+            <span>เวลาเปิด-ปิด</span>
+            <input class="input" name="hours" maxlength="120" placeholder="จ.-ส. 08:00-17:00">
+          </label>
+          <label class="field">
+            <span>สินค้า / บริการเด่น</span>
+            <input class="input" name="note" maxlength="250" placeholder="เหล็กเส้น ปูน ส่งถึงหน้างาน">
+          </label>
+        </div>
+        <div class="field">
+          <span>ตำแหน่งร้าน *</span>
+          <div class="loc-pick">
+            <code id="addCoords">—</code>
+            <button type="button" class="btn btn-sm" id="addUseGps">ใช้ GPS ตอนนี้</button>
+            <button type="button" class="btn btn-sm" id="addPickMap">เลือกบนแผนที่</button>
+          </div>
+        </div>
+        <p class="form-error" id="addError" role="alert"></p>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn" data-close>ยกเลิก</button>
+        <button type="submit" class="btn btn-primary" id="addSubmit">บันทึกร้าน</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- เกี่ยวกับ -->
+  <dialog class="dialog" id="aboutDialog" aria-labelledby="aboutTitle">
+    <div class="dialog-inner">
+      <header class="dialog-head">
+        <h2 id="aboutTitle">MATERIX ใช้งานอย่างไร</h2>
+        <button type="button" class="icon-btn" data-close aria-label="ปิด">✕</button>
+      </header>
+      <div class="dialog-body prose">
+        <ol>
+          <li><strong>เลือกตำแหน่ง</strong> — กด “ใช้ตำแหน่งของฉัน”, พิมพ์ชื่อสถานที่, เลือกเมือง หรือ “ปักหมุดบนแผนที่” (ลากหมุดสีแดงเพื่อย้ายได้)</li>
+          <li><strong>เลือกระยะและหมวดสินค้า</strong> — เช่น เหล็ก ปูน ไม้ กระเบื้อง สี ไฟฟ้า ประปา หรือเช่าเครื่องมือ</li>
+          <li><strong>ติดต่อร้าน</strong> — กดโทร, LINE, Facebook, เว็บไซต์ หรือ “นำทาง” เพื่อเปิด Google Maps</li>
+        </ol>
+        <h3>ข้อมูลมาจากไหน</h3>
+        <p>
+          รายชื่อร้านดึงสดจาก <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a> (แผนที่ที่ทุกคนช่วยกันแก้ไข)
+          ร่วมกับร้านพันธมิตรที่ผู้ดูแลเว็บยืนยันแล้ว ร้านที่ยังไม่มีเบอร์โทรจะมีปุ่ม “หาเบอร์” เพื่อค้นหาใน Google
+          และปุ่ม “แก้ไขข้อมูล” เพื่อช่วยเพิ่มเบอร์ลงใน OpenStreetMap ให้คนอื่นใช้ต่อได้
+        </p>
+        <h3>ความเป็นส่วนตัว</h3>
+        <p>
+          ตำแหน่งของคุณใช้เพื่อค้นหาร้านเท่านั้น ร้านที่บันทึกไว้และร้านที่คุณเพิ่มเก็บในเบราว์เซอร์เครื่องนี้ ไม่ได้ส่งไปเก็บที่เซิร์ฟเวอร์ของเรา
+        </p>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/stores-data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
